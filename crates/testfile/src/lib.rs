@@ -7,7 +7,7 @@ use contender_core::{
     error::ContenderError,
     generator::{
         templater::Templater,
-        types::{CreateDefinition, FunctionCallDefinition, SpamRequest},
+        types::{CreateDefinition, FunctionCallDefinition, SpamRequest, TxType},
         PlanConfig,
     },
 };
@@ -30,6 +30,60 @@ impl TestConfig {
     pub fn save_toml(&self, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let encoded = self.encode_toml()?;
         std::fs::write(file_path, encoded)?;
+        Ok(())
+    }
+
+    pub fn set_req_tx_type(&mut self, tx_type: TxType) -> Result<(), Box<dyn std::error::Error>> {
+        self.set_create_tx_type(tx_type.clone())?;
+        self.set_setup_tx_type(tx_type.clone())?;
+        self.set_spam_tx_type(tx_type.clone())?;
+        Ok(())
+    }
+
+    pub fn set_create_tx_type(
+        &mut self,
+        tx_type: TxType,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(ref mut create_defs) = self.create {
+            for create_def in create_defs {
+                if create_def.tx_type.is_none() {
+                    create_def.tx_type = Some(tx_type.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_setup_tx_type(&mut self, tx_type: TxType) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(ref mut call_defs) = self.setup {
+            for call_def in call_defs {
+                if call_def.tx_type.is_none() {
+                    call_def.tx_type = Some(tx_type.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_spam_tx_type(&mut self, tx_type: TxType) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(ref mut spam_requests) = self.spam {
+            for request in spam_requests {
+                match request {
+                    SpamRequest::Tx(call_def) => {
+                        if call_def.tx_type.is_none() {
+                            call_def.tx_type = Some(tx_type.clone());
+                        }
+                    }
+                    SpamRequest::Bundle(bundle_call) => {
+                        for call_def in &mut bundle_call.txs {
+                            if call_def.tx_type.is_none() {
+                                call_def.tx_type = Some(tx_type.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -158,6 +212,7 @@ pub mod tests {
             fuzz: None,
             value: None,
             kind: None,
+            tx_type: None,
         };
 
         TestConfig {
@@ -190,6 +245,7 @@ pub mod tests {
                 max: None,
             }]
             .into(),
+            tx_type: None,
         };
         TestConfig {
             env: None,
@@ -243,6 +299,7 @@ pub mod tests {
                     .into(),
                     kind: None,
                     fuzz: None,
+                    tx_type: None,
                 },
                 FunctionCallDefinition {
                     to: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D".to_owned(),
@@ -261,6 +318,7 @@ pub mod tests {
                     .into(),
                     kind: None,
                     fuzz: None,
+                    tx_type: None,
                 },
             ]
             .into(),

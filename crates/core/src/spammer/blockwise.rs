@@ -6,7 +6,7 @@ use futures::{Stream, StreamExt};
 use crate::{
     db::DbOps,
     error::ContenderError,
-    generator::{seeder::Seeder, templater::Templater, PlanConfig},
+    generator::{seeder::Seeder, templater::Templater, types::TxType, PlanConfig},
     test_scenario::TestScenario,
 };
 
@@ -73,6 +73,7 @@ mod tests {
         let mut agents = AgentStore::new();
         let txs_per_period = 10;
         let periods = 3;
+        let tx_type = TxType::Legacy;
         agents.add_agent(
             "pool1",
             SignerStore::new_random(txs_per_period / periods, &seed, "eeeeeeee"),
@@ -113,6 +114,7 @@ mod tests {
             seed,
             &user_signers,
             agents,
+            tx_type,
         )
         .await
         .unwrap();

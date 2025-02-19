@@ -5,7 +5,11 @@ use crate::generator::named_txs::ExecutionRequest;
 use crate::generator::templater::Templater;
 use crate::generator::types::{AnyProvider, EthProvider};
 use crate::generator::NamedTxRequest;
-use crate::generator::{seeder::Seeder, types::PlanType, Generator, PlanConfig};
+use crate::generator::{
+    seeder::Seeder,
+    types::{PlanType, TxType},
+    Generator, PlanConfig,
+};
 use crate::spammer::tx_actor::TxActorHandle;
 use crate::spammer::{ExecutionPayload, OnTxSent, SpamTrigger};
 use crate::Result;
@@ -47,6 +51,7 @@ where
     pub chain_id: u64,
     pub gas_limits: HashMap<FixedBytes<32>, u128>,
     pub msg_handle: Arc<TxActorHandle>,
+    pub tx_type: TxType,
 }
 
 impl<D, S, P> TestScenario<D, S, P>
@@ -63,6 +68,7 @@ where
         rand_seed: S,
         signers: &[PrivateKeySigner],
         agent_store: AgentStore,
+        tx_type: TxType,
     ) -> Result<Self> {
         let rpc_client = Arc::new(
             ProviderBuilder::new()
@@ -122,6 +128,7 @@ where
             nonces,
             gas_limits,
             msg_handle,
+            tx_type,
         })
     }
 
@@ -174,6 +181,7 @@ where
                 tx_req.name.as_ref().unwrap_or(&"".to_string())
             );
             let rpc_url = self.rpc_url.to_owned();
+            let tx_type = self.tx_type;
             let handle = tokio::task::spawn(async move {
                 // estimate gas limit
                 let gas_limit = wallet
@@ -182,11 +190,22 @@ where
                     .expect("failed to estimate gas");
 
                 // inject missing fields into tx_req.tx
-                let tx = tx_req
+                let mut tx = tx_req
                     .tx
-                    .with_gas_price(gas_price)
-                    .with_chain_id(chain_id)
-                    .with_gas_limit(gas_limit);
+                    .with_chain_id(chain_id);
+
+                tx = match tx_type {
+                    TxType::Legacy => {
+                        tx.with_gas_price(gas_price).with_gas_limit(gas_limit)
+                    }
+                    TxType::Eip1559 => {
+                        tx
+                            .with_max_fee_per_gas(gas_price + (gas_price / 5))
+                            .with_max_priority_fee_per_gas(gas_price)
+                            .with_gas_limit(gas_limit / 6)
+                    }
+                    _ => tx,
+                };
 
                 let res = wallet.send_transaction(tx).await;
                 if let Err(err) = res {
@@ -253,6 +272,7 @@ where
                 .to_owned();
             let db = self.db.clone();
             let rpc_url = self.rpc_url.clone();
+            let tx_type = self.tx_type;
 
             let handle = tokio::task::spawn(async move {
                 let wallet = ProviderBuilder::new()
@@ -273,11 +293,15 @@ where
                 let gas_limit = wallet.estimate_gas(&tx_req.tx).await.unwrap_or_else(|_| {
                     panic!("failed to estimate gas for setup step '{}'", tx_label)
                 });
-                let tx = tx_req
-                    .tx
-                    .with_gas_price(gas_price)
-                    .with_chain_id(chain_id)
-                    .with_gas_limit(gas_limit);
+                let mut tx = tx_req.tx.with_chain_id(chain_id);
+                tx = match tx_type {
+                    TxType::Legacy => tx.with_gas_price(gas_price).with_gas_limit(gas_limit),
+                    TxType::Eip1559 => tx
+                        .with_max_fee_per_gas(gas_price + (gas_price / 5))
+                        .with_max_priority_fee_per_gas(gas_price)
+                        .with_gas_limit(gas_limit / 6),
+                    _ => tx,
+                };
                 let res = wallet
                     .send_transaction(tx)
                     .await
@@ -352,13 +376,23 @@ where
                 None,
             ))?
             .to_owned();
-        let full_tx = tx_req
+        let mut full_tx = tx_req
             .to_owned()
             .with_nonce(nonce)
-            .with_max_fee_per_gas(gas_price + (gas_price / 5))
-            .with_max_priority_fee_per_gas(gas_price)
-            .with_chain_id(self.chain_id)
-            .with_gas_limit(gas_limit);
+            .with_chain_id(self.chain_id);
+
+        if let Some(tx_type) = tx_req.transaction_type {
+            full_tx = match tx_type {
+                _ if tx_type == TxType::Legacy as u8 => {
+                    full_tx.with_gas_price(gas_price).with_gas_limit(gas_limit)
+                }
+                _ if tx_type == TxType::Eip1559 as u8 => full_tx
+                    .with_max_fee_per_gas(gas_price + (gas_price / 5))
+                    .with_max_priority_fee_per_gas(gas_price)
+                    .with_gas_limit(gas_limit / 6),
+                _ => full_tx,
+            };
+        }
 
         Ok((full_tx, signer))
     }
